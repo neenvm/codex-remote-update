@@ -22,6 +22,7 @@ From the skill directory:
 
 ```bash
 scripts/codex-remote-update.sh --status
+scripts/codex-remote-update.sh --quiet-check
 scripts/codex-remote-update.sh --check-only
 scripts/codex-remote-update.sh --install
 ```
@@ -44,14 +45,16 @@ ssh <mac-host> 'zsh -lc "codex-remote-update --install"'
 
 1. Verify the target machine is the Mac that owns the Codex GUI/session. For remote-control issues, update the host shown in Connections, not the laptop viewing it.
 2. Run `scripts/codex-remote-update.sh --status` to capture the current GUI version, bundled CLI version, and app-server process.
-3. Run `scripts/codex-remote-update.sh --check-only` when you want to confirm whether Sparkle has an update ready without restarting Codex.
-4. Run `scripts/codex-remote-update.sh --install` when a restart is acceptable. Expect a brief disconnect if the current conversation is inside Codex.
-5. After reconnecting, run `scripts/codex-remote-update.sh --status` or inspect `~/Library/Logs/codex-remote-update/latest.log`.
+3. Run `scripts/codex-remote-update.sh --quiet-check` to make sure no shell-visible active Codex worker processes are running. This is conservative but cannot read private Codex internal thread state.
+4. Run `scripts/codex-remote-update.sh --check-only` when you want to confirm whether Sparkle has an update ready without restarting Codex.
+5. Run `scripts/codex-remote-update.sh --install` when a restart is acceptable. By default install refuses if the quiet check sees active Codex worker activity. Expect a brief disconnect if the current conversation is inside Codex.
+6. After reconnecting, run `scripts/codex-remote-update.sh --status` or inspect `~/Library/Logs/codex-remote-update/latest.log`.
 
 ## Guardrails
 
 - Use the normal logged-in macOS app and Sparkle updater UI only.
 - Do not use this skill for Linux, Windows, web-only Codex, or non-GUI hosts.
+- Default install must pass the quiet check first. Use `--force-active` only when the user explicitly accepts interrupting active Codex work.
 - Do not use private updater endpoints or manual app-bundle surgery.
 - Do not create persistent `launchctl` or `KeepAlive` reopen jobs. The bundled script uses a finite detached watchdog that repeatedly reopens Codex until GUI plus app-server are back, then exits.
 - If a previous failed update left jobs such as `codex-force-restart-*` or `codex-reopen-after-*`, unload them after verifying Codex is running.

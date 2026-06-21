@@ -9,11 +9,13 @@ CHECK_TIMEOUT="${CODEX_UPDATE_CHECK_TIMEOUT:-45}"
 RELAUNCH_TIMEOUT="${CODEX_UPDATE_RELAUNCH_TIMEOUT:-240}"
 HELPER_TIMEOUT="${CODEX_UPDATE_HELPER_TIMEOUT:-600}"
 HELPER_INTERVAL="${CODEX_UPDATE_HELPER_INTERVAL:-10}"
+ACTIVE_CPU_THRESHOLD="${CODEX_UPDATE_ACTIVE_CPU_THRESHOLD:-5.0}"
+ALLOW_ACTIVE_THREADS="${CODEX_UPDATE_ALLOW_ACTIVE_THREADS:-0}"
 
 usage() {
   cat <<'USAGE'
 Usage:
-  codex-remote-update [--install] [--status] [--check-only] [--test-reopen-helper] [--help]
+  codex-remote-update [--install] [--status] [--check-only] [--quiet-check] [--test-reopen-helper] [--force-active] [--help]
 
 macOS-only: updates the local macOS Codex.app through the normal Sparkle UI,
 then verifies that Codex and its app-server are running again. Designed for use
@@ -23,8 +25,11 @@ Options:
   --install     Check for updates and install/relaunch if one is ready. Default.
   --check-only  Open the updater and report the dialog text without installing.
   --status      Print installed versions and current Codex processes only.
+  --quiet-check Report whether shell-visible Codex worker activity looks quiet.
   --test-reopen-helper
                 Start only the finite backup reopen watchdog.
+  --force-active
+                Allow install even if the quiet check sees active workers.
   --help        Show this help.
 
 Environment:
@@ -33,6 +38,10 @@ Environment:
   CODEX_UPDATE_RELAUNCH_TIMEOUT  Seconds to wait for relaunch verification, default 240
   CODEX_UPDATE_HELPER_TIMEOUT    Seconds backup helper keeps reopening, default 600
   CODEX_UPDATE_HELPER_INTERVAL   Seconds between backup reopen attempts, default 10
+  CODEX_UPDATE_ACTIVE_CPU_THRESHOLD
+                                  CPU percent threshold for worker helpers, default 5.0
+  CODEX_UPDATE_ALLOW_ACTIVE_THREADS=1
+                                  Same effect as --force-active
 USAGE
 }
 
@@ -40,7 +49,9 @@ while [[ $# -gt 0 ]]; do
   case "$1" in
     --install) MODE="install" ;;
     --check-only) MODE="check-only" ;;
+    --quiet-check) MODE="quiet-check" ;;
     --test-reopen-helper) MODE="test-reopen-helper" ;;
+    --force-active) ALLOW_ACTIVE_THREADS="1" ;;
     --status) MODE="status" ;;
     --help|-h) usage; exit 0 ;;
     *)
@@ -90,6 +101,69 @@ codex_processes() {
   /bin/ps -axo pid,etime,command \
     | /usr/bin/grep -E '(/Applications/Codex\.app/Contents/MacOS/Codex|/Applications/Codex\.app/Contents/Resources/codex app-server)' \
     | /usr/bin/grep -v grep || true
+}
+
+active_codex_work_report() {
+  /bin/ps -axo pid=,pcpu=,etime=,command= \
+    | /usr/bin/awk -v threshold="$ACTIVE_CPU_THRESHOLD" '
+      {
+        pid=$1
+        pcpu=$2 + 0
+        etime=$3
+        $1=""
+        $2=""
+        $3=""
+        sub(/^ +/, "")
+        cmd=$0
+
+        if (cmd ~ /codex-remote-update/) next
+        if (cmd ~ /\/Applications\/Codex.app\/Contents\/MacOS\/Codex$/) next
+        if (cmd ~ /\/Applications\/Codex.app\/Contents\/Resources\/codex app-server/) next
+        if (cmd ~ /\/Applications\/Codex.app\/Contents\/Frameworks\/Codex Framework.framework/) next
+        if (cmd ~ /\/Applications\/Codex.app\/Contents\/Frameworks\/Sparkle.framework/) next
+        if (cmd ~ /org.sparkle-project.Sparkle\/Launcher/) next
+        if (cmd ~ /\/Applications\/Codex.app\/Contents\/Resources\/codex_chronicle/) next
+        if (cmd ~ /\/Applications\/Codex.app\/Contents\/Resources\/native\/bare-modifier-monitor/) next
+        if (cmd ~ /\/Users\/.*\/\.codex\/computer-use\/Codex Computer Use.app\/Contents\/MacOS\/SkyComputerUseService/) next
+
+        if (cmd ~ /\/Applications\/Codex.app\/Contents\/Resources\/codex /) {
+          print pid " cpu=" pcpu " etime=" etime " " cmd
+          next
+        }
+
+        if (cmd ~ /cua_node\/bin\/node_repl|SkyComputerUseClient.app\/Contents\/MacOS\/SkyComputerUseClient/) {
+          if (pcpu >= threshold) {
+            print pid " cpu=" pcpu " etime=" etime " " cmd
+          }
+        }
+      }
+    '
+}
+
+quiet_check() {
+  local report
+  report="$(active_codex_work_report)"
+  if [[ -n "$report" ]]; then
+    log "Active Codex worker-like processes detected:"
+    print -r -- "$report" | tee -a "$LOG_FILE"
+    return 1
+  fi
+
+  log "Quiet check passed: no shell-visible active Codex workers above ${ACTIVE_CPU_THRESHOLD}% CPU."
+  return 0
+}
+
+require_quiet_for_install() {
+  if quiet_check; then
+    return 0
+  fi
+
+  if [[ "$ALLOW_ACTIVE_THREADS" == "1" ]]; then
+    log "Continuing because --force-active or CODEX_UPDATE_ALLOW_ACTIVE_THREADS=1 was set."
+    return 0
+  fi
+
+  die "Refusing to install while Codex worker activity is visible. Re-run after other work finishes, or use --force-active only if you accept interrupting active work."
 }
 
 status() {
@@ -313,6 +387,12 @@ main() {
     return
   fi
 
+  if [[ "$MODE" == "quiet-check" ]]; then
+    status
+    quiet_check
+    return
+  fi
+
   if [[ "$MODE" == "test-reopen-helper" ]]; then
     [[ -d "$APP_PATH" ]] || die "Codex app not found at $APP_PATH"
     start_backup_reopen
@@ -324,6 +404,7 @@ main() {
   local before
   before="$(app_version | tr '\n' ' ')"
   status
+  require_quiet_for_install
   clear_skipped_update
   open_update_dialog
 
