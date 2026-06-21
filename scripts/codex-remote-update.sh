@@ -15,9 +15,9 @@ usage() {
 Usage:
   codex-remote-update [--install] [--status] [--check-only] [--test-reopen-helper] [--help]
 
-Updates the local macOS Codex.app through the normal Sparkle UI, then verifies
-that Codex and its app-server are running again. Designed for use on the Mac
-mini from any cwd or over a remote shell.
+macOS-only: updates the local macOS Codex.app through the normal Sparkle UI,
+then verifies that Codex and its app-server are running again. Designed for use
+on a logged-in Mac GUI host from any cwd or over a remote shell.
 
 Options:
   --install     Check for updates and install/relaunch if one is ready. Default.
@@ -67,6 +67,12 @@ log() {
 die() {
   log "ERROR: $*"
   exit 1
+}
+
+require_macos() {
+  if [[ "$(/usr/bin/uname -s)" != "Darwin" ]]; then
+    die "This skill is macOS-only because it requires Codex.app, Sparkle, osascript, open, and a logged-in GUI session."
+  fi
 }
 
 app_version() {
@@ -300,6 +306,7 @@ main() {
   : > "$LOG_FILE"
   ln -sf "$LOG_FILE" "$LATEST_LOG"
   log "Log file: $LOG_FILE"
+  require_macos
 
   if [[ "$MODE" == "status" ]]; then
     status
