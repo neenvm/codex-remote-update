@@ -1,0 +1,4 @@
+interface:
+  display_name: "Codex Remote Update"
+  short_description: "Update and relaunch Codex remotely"
+  default_prompt: "Use $codex-remote-update to update the local macOS Codex app and verify it relaunched."
