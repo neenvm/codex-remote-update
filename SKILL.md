@@ -11,6 +11,13 @@ Use the bundled script to update Codex on the active macOS GUI host without leav
 
 ## Quick Start
 
+Install as a Codex skill from GitHub:
+
+```bash
+mkdir -p "$HOME/.codex/skills"
+git clone https://github.com/neenvm/codex-remote-update.git "$HOME/.codex/skills/codex-remote-update"
+```
+
 From the skill directory:
 
 ```bash
