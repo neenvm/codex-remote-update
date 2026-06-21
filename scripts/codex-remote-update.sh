@@ -7,11 +7,13 @@ LOG_DIR="${CODEX_UPDATE_LOG_DIR:-$HOME/Library/Logs/codex-remote-update}"
 MODE="install"
 CHECK_TIMEOUT="${CODEX_UPDATE_CHECK_TIMEOUT:-45}"
 RELAUNCH_TIMEOUT="${CODEX_UPDATE_RELAUNCH_TIMEOUT:-240}"
+HELPER_TIMEOUT="${CODEX_UPDATE_HELPER_TIMEOUT:-600}"
+HELPER_INTERVAL="${CODEX_UPDATE_HELPER_INTERVAL:-10}"
 
 usage() {
   cat <<'USAGE'
 Usage:
-  codex-remote-update [--install] [--status] [--check-only] [--help]
+  codex-remote-update [--install] [--status] [--check-only] [--test-reopen-helper] [--help]
 
 Updates the local macOS Codex.app through the normal Sparkle UI, then verifies
 that Codex and its app-server are running again. Designed for use on the Mac
@@ -21,12 +23,16 @@ Options:
   --install     Check for updates and install/relaunch if one is ready. Default.
   --check-only  Open the updater and report the dialog text without installing.
   --status      Print installed versions and current Codex processes only.
+  --test-reopen-helper
+                Start only the finite backup reopen watchdog.
   --help        Show this help.
 
 Environment:
   CODEX_APP_PATH                 Defaults to /Applications/Codex.app
   CODEX_UPDATE_CHECK_TIMEOUT     Seconds to wait for the update dialog, default 45
   CODEX_UPDATE_RELAUNCH_TIMEOUT  Seconds to wait for relaunch verification, default 240
+  CODEX_UPDATE_HELPER_TIMEOUT    Seconds backup helper keeps reopening, default 600
+  CODEX_UPDATE_HELPER_INTERVAL   Seconds between backup reopen attempts, default 10
 USAGE
 }
 
@@ -34,6 +40,7 @@ while [[ $# -gt 0 ]]; do
   case "$1" in
     --install) MODE="install" ;;
     --check-only) MODE="check-only" ;;
+    --test-reopen-helper) MODE="test-reopen-helper" ;;
     --status) MODE="status" ;;
     --help|-h) usage; exit 0 ;;
     *)
@@ -160,26 +167,76 @@ wait_for_update_dialog() {
 
 start_backup_reopen() {
   local helper_log="$LOG_DIR/$RUN_ID-reopen-helper.log"
-  log "Starting finite backup reopen helper: $helper_log"
-  /usr/bin/nohup /bin/zsh -lc "
-    {
-      echo '[codex-remote-update helper] started at ' \$(date)
-      sleep 90
-      if /usr/bin/pgrep -x Codex >/dev/null 2>&1; then
-        echo '[codex-remote-update helper] Codex already running; no backup open needed'
-      else
-        echo '[codex-remote-update helper] Codex missing; opening $APP_PATH'
-        /usr/bin/open -a '$APP_PATH'
-      fi
-      sleep 20
-      echo '[codex-remote-update helper] app version/build:'
-      /usr/libexec/PlistBuddy -c 'Print :CFBundleShortVersionString' -c 'Print :CFBundleVersion' '$APP_PATH/Contents/Info.plist' 2>&1
-      echo '[codex-remote-update helper] cli version:'
-      '$APP_PATH/Contents/Resources/codex' --version 2>&1
-      echo '[codex-remote-update helper] finished at ' \$(date)
-    } >> '$helper_log' 2>&1
-  " >/dev/null 2>&1 &
+  local helper_script="$LOG_DIR/$RUN_ID-reopen-helper.zsh"
+  log "Starting finite backup reopen watchdog: $helper_log"
+  cat > "$helper_script" <<EOF
+#!/usr/bin/env zsh
+set -u
+
+APP_PATH='$APP_PATH'
+HELPER_LOG='$helper_log'
+HELPER_TIMEOUT='$HELPER_TIMEOUT'
+HELPER_INTERVAL='$HELPER_INTERVAL'
+
+helper_log() {
+  print -r -- "[\$(date '+%Y-%m-%d %H:%M:%S %Z')] \$*" >> "\$HELPER_LOG"
+}
+
+app_version() {
+  /usr/libexec/PlistBuddy \\
+    -c 'Print :CFBundleShortVersionString' \\
+    -c 'Print :CFBundleVersion' \\
+    "\$APP_PATH/Contents/Info.plist" 2>&1
+}
+
+cli_version() {
+  "\$APP_PATH/Contents/Resources/codex" --version 2>&1
+}
+
+has_gui() {
+  /usr/bin/pgrep -x Codex >/dev/null 2>&1
+}
+
+has_app_server() {
+  /usr/bin/pgrep -f "\$APP_PATH/Contents/Resources/codex app-server" >/dev/null 2>&1
+}
+
+deadline=\$(( \$(date +%s) + HELPER_TIMEOUT ))
+attempt=0
+
+helper_log "backup reopen watchdog started; timeout=\${HELPER_TIMEOUT}s interval=\${HELPER_INTERVAL}s"
+
+while (( \$(date +%s) <= deadline )); do
+  if has_gui && has_app_server; then
+    helper_log "Codex GUI and app-server are running."
+    helper_log "app version/build:"
+    app_version >> "\$HELPER_LOG"
+    helper_log "cli version:"
+    cli_version >> "\$HELPER_LOG"
+    helper_log "backup reopen watchdog finished successfully."
+    exit 0
+  fi
+
+  if [[ -d "\$APP_PATH" ]]; then
+    attempt=\$(( attempt + 1 ))
+    helper_log "Codex not fully running; open attempt \$attempt."
+    /usr/bin/open -a "\$APP_PATH" >> "\$HELPER_LOG" 2>&1 || true
+  else
+    helper_log "Codex app path missing while updater may be swapping bundle: \$APP_PATH"
+  fi
+
+  sleep "\$HELPER_INTERVAL"
+done
+
+helper_log "backup reopen watchdog timed out without seeing both GUI and app-server."
+helper_log "last app version/build attempt:"
+app_version >> "\$HELPER_LOG" || true
+exit 1
+EOF
+  chmod +x "$helper_script"
+  /usr/bin/nohup /bin/zsh "$helper_script" >/dev/null 2>&1 &
   disown || true
+  log "Backup watchdog pid: $!"
 }
 
 press_default_install() {
@@ -246,6 +303,13 @@ main() {
 
   if [[ "$MODE" == "status" ]]; then
     status
+    return
+  fi
+
+  if [[ "$MODE" == "test-reopen-helper" ]]; then
+    [[ -d "$APP_PATH" ]] || die "Codex app not found at $APP_PATH"
+    start_backup_reopen
+    log "Started backup reopen watchdog only. Helper log: $LOG_DIR/$RUN_ID-reopen-helper.log"
     return
   fi
 

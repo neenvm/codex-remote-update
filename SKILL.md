@@ -7,7 +7,7 @@ description: Safely update and relaunch the macOS Codex desktop app from a remot
 
 ## Overview
 
-Use the bundled script to update Codex on the active macOS GUI host without leaving a persistent reopen loop. The script checks versions, clears a skipped Sparkle version if present, opens Codex's normal `Check for Updates...` flow, starts a finite backup reopen helper, installs the update if one is ready, and verifies that both the GUI and `codex app-server` are running again.
+Use the bundled script to update Codex on the active macOS GUI host without leaving a persistent reopen loop. The script checks versions, clears a skipped Sparkle version if present, opens Codex's normal `Check for Updates...` flow, starts a finite backup reopen watchdog, installs the update if one is ready, and verifies that both the GUI and `codex app-server` are running again.
 
 ## Quick Start
 
@@ -52,7 +52,7 @@ ssh <mac-host> 'zsh -lc "codex-remote-update --install"'
 
 - Use the normal logged-in macOS app and Sparkle updater UI only.
 - Do not use private updater endpoints or manual app-bundle surgery.
-- Do not create persistent `launchctl` or `KeepAlive` reopen jobs. The bundled script uses a finite detached helper and then exits.
+- Do not create persistent `launchctl` or `KeepAlive` reopen jobs. The bundled script uses a finite detached watchdog that repeatedly reopens Codex until GUI plus app-server are back, then exits.
 - If a previous failed update left jobs such as `codex-force-restart-*` or `codex-reopen-after-*`, unload them after verifying Codex is running.
 - Preserve user work: warn that the update will quit/relaunch Codex when running from an active Codex chat.
 
