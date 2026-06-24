@@ -4,6 +4,9 @@
 that automates the local macOS Codex.app updater UI and verifies that Codex
 comes back after an update.
 
+The project scope is Codex-only. It should not be used or extended as a generic
+updater for unrelated apps.
+
 ## Trust Boundary
 
 The script runs with the permissions of the user who starts it. It does not ask
@@ -34,6 +37,7 @@ Expected sensitive capabilities:
 - No persistent `launchd`, `KeepAlive`, login item, or daemon installation.
 - No app-bundle patching or manual replacement.
 - No exchange/trading/payment behavior.
+- No generic non-Codex app updates.
 
 ## How To Review Before Running
 

@@ -7,6 +7,10 @@ This is a small, macOS-only Codex skill and script. It uses the normal logged-in
 Codex.app Sparkle updater UI, starts a finite backup reopen watchdog, and then
 verifies that both the Codex GUI and `codex app-server` are running again.
 
+This project is Codex-only. It is not intended to update arbitrary apps or
+packages. See [ROADMAP.md](ROADMAP.md) for the safe cross-platform Codex app/CLI
+direction.
+
 ## What It Is For
 
 - Updating Codex on a Mac you are controlling remotely.
@@ -18,6 +22,7 @@ verifies that both the Codex GUI and `codex app-server` are running again.
 ## What It Is Not
 
 - Not a Linux, Windows, browser-only, or headless updater.
+- Not a generic updater for non-Codex apps.
 - Not a private updater client.
 - Not an updater bypass, app-bundle patcher, or credential helper.
 - Not a guarantee that private Codex internal thread state is idle.
@@ -194,6 +199,7 @@ running normally.
 
 ```text
 LICENSE                         MIT license
+ROADMAP.md                      Codex-only cross-platform plan
 SECURITY.md                     Security model and review guidance
 SKILL.md                         Codex skill instructions
 agents/openai.yaml               Skill display metadata
