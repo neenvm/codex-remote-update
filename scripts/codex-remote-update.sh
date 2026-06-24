@@ -34,6 +34,8 @@ Options:
 
 Environment:
   CODEX_APP_PATH                 Defaults to /Applications/Codex.app
+  CODEX_APP_ID                   Defaults to com.openai.codex
+  CODEX_UPDATE_LOG_DIR           Defaults to ~/Library/Logs/codex-remote-update
   CODEX_UPDATE_CHECK_TIMEOUT     Seconds to wait for the update dialog, default 45
   CODEX_UPDATE_RELAUNCH_TIMEOUT  Seconds to wait for relaunch verification, default 240
   CODEX_UPDATE_HELPER_TIMEOUT    Seconds backup helper keeps reopening, default 600
