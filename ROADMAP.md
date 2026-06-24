@@ -3,9 +3,10 @@
 This project is for Codex update and health workflows only. It should not become
 a generic desktop app updater.
 
-The current implementation is intentionally macOS-only because it automates the
+The macOS desktop updater is intentionally macOS-only because it automates the
 local Codex.app Sparkle updater UI and verifies that Codex GUI plus
-`codex app-server` come back afterward.
+`codex app-server` come back afterward. Cross-platform support is implemented as
+doctor/status scripts that report Codex app, CLI, and app-server health.
 
 Reference docs:
 
@@ -39,6 +40,7 @@ Current support:
 - `codex app-server` process verification.
 - Normal Codex.app Sparkle updater UI.
 - Finite reopen watchdog.
+- Cross-platform doctor via `scripts/codex-update-doctor.sh`.
 
 Possible future support:
 
@@ -48,13 +50,20 @@ Possible future support:
 
 ### Windows
 
-Planned support:
+Current support:
 
-- Detect Codex desktop app installation from official Windows install locations.
+- Detect Codex desktop app installation from Appx package metadata.
 - Detect Codex CLI on `PATH`.
 - Report Codex app, CLI, and app-server status.
-- Prefer official Windows update paths such as Microsoft Store or `winget` when
-  Codex is installed through those channels.
+- Report whether `winget` can see a Codex package from the Microsoft Store
+  source.
+- Run `codex update` only when available and explicitly allowed with
+  `CODEX_UPDATE_ALLOW_APPLY=1`.
+
+Planned support:
+
+- Prefer official Windows update paths such as Microsoft Store or `winget` only
+  after exact package identity is verified on a real Windows host.
 
 Safety constraints:
 
@@ -74,12 +83,16 @@ Open questions to verify on a real Windows host:
 
 ### Linux
 
-Planned support:
+Current support:
 
 - Codex CLI status and version detection.
-- `codex update` support when available.
+- `codex update` support when available and explicitly allowed with
+  `CODEX_UPDATE_ALLOW_APPLY=1`.
+- WSL-aware reporting that points Windows app checks to the PowerShell doctor.
+
+Planned support:
+
 - Official installer guidance when self-update is unavailable.
-- Optional WSL-aware reporting when running under WSL2.
 
 Non-goal for now:
 
@@ -108,11 +121,11 @@ codex-remote-update --install
 For cross-platform work, add safer neutral commands before adding installers:
 
 ```bash
-codex-remote-update --doctor
-codex-remote-update --app-status
-codex-remote-update --cli-status
-codex-remote-update --app-server-status
-codex-remote-update --check
+scripts/codex-update-doctor.sh --doctor
+scripts/codex-update-doctor.sh --app-status
+scripts/codex-update-doctor.sh --cli-status
+scripts/codex-update-doctor.sh --app-server-status
+scripts/codex-update-doctor.sh --check
 ```
 
 `--install` should remain platform-gated and refuse when the safe official path
@@ -121,10 +134,10 @@ for the detected platform/install type is unknown.
 ## Implementation Phases
 
 1. Refactor the current script into small platform/status functions without
-   changing macOS behavior.
+   changing macOS behavior. Partial: added separate doctor scripts.
 2. Add read-only OS detection and Codex CLI detection for macOS, Windows, Linux,
-   and WSL.
-3. Add `--doctor` as a read-only report.
+   and WSL. Done.
+3. Add `--doctor` as a read-only report. Done.
 4. Add `--check` for update availability where an official check path exists.
 5. Add Windows update support only after testing on a real Windows machine.
 6. Add Linux CLI update support only through official CLI mechanisms.

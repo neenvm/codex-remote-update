@@ -1,8 +1,9 @@
 # Security
 
-`codex-remote-update` is intentionally small and auditable. It is a zsh script
-that automates the local macOS Codex.app updater UI and verifies that Codex
-comes back after an update.
+`codex-remote-update` is intentionally small and auditable. The macOS updater is
+a zsh script that automates the local macOS Codex.app updater UI and verifies
+that Codex comes back after an update. The cross-platform doctor scripts are
+read-only by default and report Codex app/CLI/app-server health.
 
 The project scope is Codex-only. It should not be used or extended as a generic
 updater for unrelated apps.
@@ -22,6 +23,10 @@ Expected sensitive capabilities:
   after the user runs `--check-only` or `--install`.
 - Local process inspection with `ps` and `pgrep`, used to report Codex GUI,
   app-server, and shell-visible worker activity.
+- Windows process/Appx/winget inspection in the PowerShell doctor. Windows
+  update application is intentionally refused until a safe package identity is
+  verified on a real Windows host, unless `codex update` is available and the
+  user opts in with `CODEX_UPDATE_ALLOW_APPLY=1`.
 - Local log writes and a finite reopen helper script under
   `~/Library/Logs/codex-remote-update/` by default.
 - A Codex.app preference write that clears `SUSkippedVersion` when Sparkle has a
@@ -50,10 +55,13 @@ less scripts/codex-remote-update.sh
 zsh -n scripts/codex-remote-update.sh
 scripts/codex-remote-update.sh --status
 scripts/codex-remote-update.sh --quiet-check
+scripts/codex-update-doctor.sh --doctor
 ```
 
 `--status` only prints installed Codex versions and matching processes.
 `--quiet-check` adds a conservative process check for active Codex workers.
+`codex-update-doctor.sh --doctor` is read-only and adds Codex CLI/app-server
+health reporting.
 
 The actions that open the updater UI are:
 

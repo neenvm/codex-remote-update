@@ -3,9 +3,13 @@
 Safely update the macOS Codex desktop app from a remote shell while preserving a
 way back into the app after it quits for the updater.
 
-This is a small, macOS-only Codex skill and script. It uses the normal logged-in
-Codex.app Sparkle updater UI, starts a finite backup reopen watchdog, and then
-verifies that both the Codex GUI and `codex app-server` are running again.
+This is a small Codex-only update and health toolkit. It started as a macOS
+remote updater for Codex.app and now also includes safe Codex doctor scripts for
+macOS, Windows, Linux, and WSL.
+
+The macOS app updater uses the normal logged-in Codex.app Sparkle updater UI,
+starts a finite backup reopen watchdog, and then verifies that both the Codex
+GUI and `codex app-server` are running again.
 
 This project is Codex-only. It is not intended to update arbitrary apps or
 packages. See [ROADMAP.md](ROADMAP.md) for the safe cross-platform Codex app/CLI
@@ -14,6 +18,8 @@ direction.
 ## What It Is For
 
 - Updating Codex on a Mac you are controlling remotely.
+- Checking Codex app, CLI, and app-server health on macOS, Windows, Linux, and
+  WSL.
 - Recovering from Codex desktop / Connections / app-server version mismatches.
 - Checking the installed Codex GUI version, bundled CLI version, and app-server
   process from a terminal.
@@ -21,15 +27,17 @@ direction.
 
 ## What It Is Not
 
-- Not a Linux, Windows, browser-only, or headless updater.
 - Not a generic updater for non-Codex apps.
+- Not a Linux desktop app updater while Codex does not publish a Linux desktop
+  app.
 - Not a private updater client.
 - Not an updater bypass, app-bundle patcher, or credential helper.
 - Not a guarantee that private Codex internal thread state is idle.
 
-The script only works on the Mac GUI host that owns the running Codex.app
-session. If you are viewing that Mac through remote desktop, run this on the
-remote Mac, not on the laptop or phone you are viewing from.
+The macOS app updater only works on the Mac GUI host that owns the running
+Codex.app session. If you are viewing that Mac through remote desktop, run the
+macOS updater on the remote Mac, not on the laptop or phone you are viewing
+from.
 
 ## Should I Trust This?
 
@@ -54,8 +62,7 @@ Safety-relevant facts:
 Start with read-only checks:
 
 ```bash
-scripts/codex-remote-update.sh --status
-scripts/codex-remote-update.sh --quiet-check
+scripts/codex-update-doctor.sh --doctor
 ```
 
 See [SECURITY.md](SECURITY.md) for the full trust boundary.
@@ -75,11 +82,40 @@ Optional: make the script callable from any directory on the same Mac.
 mkdir -p "$HOME/.local/bin"
 ln -sf "$HOME/.codex/skills/codex-remote-update/scripts/codex-remote-update.sh" \
   "$HOME/.local/bin/codex-remote-update"
+ln -sf "$HOME/.codex/skills/codex-remote-update/scripts/codex-update-doctor.sh" \
+  "$HOME/.local/bin/codex-update-doctor"
 ```
 
 Make sure `~/.local/bin` is on your `PATH` if you use the short command.
 
 ## Usage
+
+### Cross-Platform Doctor
+
+macOS, Linux, or WSL:
+
+```bash
+scripts/codex-update-doctor.sh --doctor
+scripts/codex-update-doctor.sh --app-status
+scripts/codex-update-doctor.sh --cli-status
+scripts/codex-update-doctor.sh --app-server-status
+scripts/codex-update-doctor.sh --check
+```
+
+Windows PowerShell:
+
+```powershell
+.\scripts\codex-update-doctor.ps1 -Doctor
+.\scripts\codex-update-doctor.ps1 -AppStatus
+.\scripts\codex-update-doctor.ps1 -CliStatus
+.\scripts\codex-update-doctor.ps1 -AppServerStatus
+.\scripts\codex-update-doctor.ps1 -Check
+```
+
+`--doctor` / `-Doctor` is read-only. It reports the OS, Codex desktop app where
+supported, Codex CLI, app-server process, and known update path.
+
+### macOS Remote App Update
 
 From the skill directory:
 
@@ -93,6 +129,7 @@ scripts/codex-remote-update.sh --install
 If you installed the optional symlink:
 
 ```bash
+codex-update-doctor --doctor
 codex-remote-update --status
 codex-remote-update --quiet-check
 codex-remote-update --check-only
@@ -122,7 +159,7 @@ ssh <mac-host> 'zsh -lc "codex-remote-update --install"'
 `--install` refuses by default if it sees shell-visible Codex worker activity.
 Use `--force-active` only when you explicitly accept interrupting active work.
 
-## Options
+## macOS App Updater Options
 
 ```text
 --install              Check for updates and install/relaunch if one is ready. Default.
@@ -147,6 +184,36 @@ CODEX_UPDATE_HELPER_INTERVAL=10
 CODEX_UPDATE_ACTIVE_CPU_THRESHOLD=5.0
 CODEX_UPDATE_ALLOW_ACTIVE_THREADS=1
 ```
+
+## Cross-Platform Doctor Options
+
+Unix/macOS/WSL:
+
+```text
+--doctor             Read-only OS, Codex app, CLI, and app-server report. Default.
+--status             Alias for --doctor.
+--app-status         Report Codex desktop app status where supported.
+--cli-status         Report Codex CLI status.
+--app-server-status  Report Codex app-server process status.
+--check              Read-only update path check.
+--install            Apply only known safe Codex update paths.
+```
+
+Windows PowerShell:
+
+```text
+-Doctor
+-Status
+-AppStatus
+-CliStatus
+-AppServerStatus
+-Check
+-Install
+```
+
+On Linux/WSL/Windows, install mode only uses `codex update` when that command is
+available and `CODEX_UPDATE_ALLOW_APPLY=1` is set. Unknown install/update paths
+are refused.
 
 ## Logs
 
@@ -203,6 +270,8 @@ ROADMAP.md                      Codex-only cross-platform plan
 SECURITY.md                     Security model and review guidance
 SKILL.md                         Codex skill instructions
 agents/openai.yaml               Skill display metadata
+scripts/codex-update-doctor.ps1  Windows Codex doctor
+scripts/codex-update-doctor.sh   macOS/Linux/WSL Codex doctor
 scripts/codex-remote-update.sh   Update/check/watchdog script
 ```
 
