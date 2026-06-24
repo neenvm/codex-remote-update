@@ -26,6 +26,35 @@ The script only works on the Mac GUI host that owns the running Codex.app
 session. If you are viewing that Mac through remote desktop, run this on the
 remote Mac, not on the laptop or phone you are viewing from.
 
+## Should I Trust This?
+
+Read the script before you run it. The install path is `git clone`, not
+`curl | sh`, so you can inspect exactly what will execute.
+
+Safety-relevant facts:
+
+- It does not use `sudo`.
+- It does not install daemons, login items, or persistent `launchd` jobs.
+- It does not store or read credentials.
+- It does not call private update endpoints.
+- It does not patch or replace the app bundle manually.
+- It writes logs and a finite reopen helper script under
+  `~/Library/Logs/codex-remote-update/` by default.
+- It may clear Codex.app's skipped Sparkle update preference so the normal
+  updater can check again.
+- It uses macOS Accessibility / System Events only to drive Codex.app's normal
+  updater UI.
+- Only `--install` can quit/relaunch Codex.
+
+Start with read-only checks:
+
+```bash
+scripts/codex-remote-update.sh --status
+scripts/codex-remote-update.sh --quiet-check
+```
+
+See [SECURITY.md](SECURITY.md) for the full trust boundary.
+
 ## Install
 
 Install as a Codex skill:
@@ -165,6 +194,7 @@ running normally.
 
 ```text
 LICENSE                         MIT license
+SECURITY.md                     Security model and review guidance
 SKILL.md                         Codex skill instructions
 agents/openai.yaml               Skill display metadata
 scripts/codex-remote-update.sh   Update/check/watchdog script

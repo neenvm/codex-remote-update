@@ -65,8 +65,14 @@ while [[ $# -gt 0 ]]; do
   shift
 done
 
+fatal_before_log() {
+  echo "ERROR: $*" >&2
+  exit 1
+}
+
+[[ "$LOG_DIR" = /* ]] || fatal_before_log "CODEX_UPDATE_LOG_DIR must be an absolute path, got: $LOG_DIR"
 mkdir -p "$LOG_DIR"
-RUN_ID="$(date +%Y%m%d-%H%M%S)"
+RUN_ID="$(date +%Y%m%d-%H%M%S)-$$"
 LOG_FILE="$LOG_DIR/$RUN_ID.log"
 LATEST_LOG="$LOG_DIR/latest.log"
 
@@ -80,6 +86,53 @@ log() {
 die() {
   log "ERROR: $*"
   exit 1
+}
+
+validate_positive_integer() {
+  local name="$1"
+  local value="$2"
+  if [[ ! "$value" =~ '^[1-9][0-9]*$' ]]; then
+    die "$name must be a positive integer, got: $value"
+  fi
+}
+
+validate_nonnegative_number() {
+  local name="$1"
+  local value="$2"
+  if [[ ! "$value" =~ '^[0-9]+([.][0-9]+)?$' ]]; then
+    die "$name must be a nonnegative number, got: $value"
+  fi
+}
+
+validate_bundle_id() {
+  if [[ ! "$APP_ID" =~ '^[A-Za-z0-9][A-Za-z0-9.-]*$' ]]; then
+    die "CODEX_APP_ID must look like a macOS bundle identifier, got: $APP_ID"
+  fi
+}
+
+app_bundle_id() {
+  /usr/libexec/PlistBuddy \
+    -c 'Print :CFBundleIdentifier' \
+    "$APP_PATH/Contents/Info.plist"
+}
+
+validate_config() {
+  [[ "$APP_PATH" = /* ]] || die "CODEX_APP_PATH must be an absolute path, got: $APP_PATH"
+  [[ "$APP_PATH" == *.app ]] || die "CODEX_APP_PATH must point to a .app bundle, got: $APP_PATH"
+  [[ -d "$APP_PATH" ]] || die "Codex app not found at $APP_PATH"
+  [[ -f "$APP_PATH/Contents/Info.plist" ]] || die "Info.plist not found under $APP_PATH"
+  [[ -x "$APP_PATH/Contents/Resources/codex" ]] || die "Bundled codex CLI not executable under $APP_PATH"
+
+  validate_bundle_id
+  local actual_id
+  actual_id="$(app_bundle_id)"
+  [[ "$actual_id" == "$APP_ID" ]] || die "CODEX_APP_ID ($APP_ID) does not match bundle identifier at CODEX_APP_PATH ($actual_id)."
+
+  validate_positive_integer CODEX_UPDATE_CHECK_TIMEOUT "$CHECK_TIMEOUT"
+  validate_positive_integer CODEX_UPDATE_RELAUNCH_TIMEOUT "$RELAUNCH_TIMEOUT"
+  validate_positive_integer CODEX_UPDATE_HELPER_TIMEOUT "$HELPER_TIMEOUT"
+  validate_positive_integer CODEX_UPDATE_HELPER_INTERVAL "$HELPER_INTERVAL"
+  validate_nonnegative_number CODEX_UPDATE_ACTIVE_CPU_THRESHOLD "$ACTIVE_CPU_THRESHOLD"
 }
 
 require_macos() {
@@ -101,13 +154,14 @@ cli_version() {
 
 codex_processes() {
   /bin/ps -axo pid,etime,command \
-    | /usr/bin/grep -E '(/Applications/Codex\.app/Contents/MacOS/Codex|/Applications/Codex\.app/Contents/Resources/codex app-server)' \
-    | /usr/bin/grep -v grep || true
+    | /usr/bin/awk -v app="$APP_PATH" '
+      index($0, app "/Contents/MacOS/Codex") || index($0, app "/Contents/Resources/codex app-server")
+    ' || true
 }
 
 active_codex_work_report() {
   /bin/ps -axo pid=,pcpu=,etime=,command= \
-    | /usr/bin/awk -v threshold="$ACTIVE_CPU_THRESHOLD" '
+    | /usr/bin/awk -v threshold="$ACTIVE_CPU_THRESHOLD" -v app="$APP_PATH" '
       {
         pid=$1
         pcpu=$2 + 0
@@ -119,16 +173,16 @@ active_codex_work_report() {
         cmd=$0
 
         if (cmd ~ /codex-remote-update/) next
-        if (cmd ~ /\/Applications\/Codex.app\/Contents\/MacOS\/Codex$/) next
-        if (cmd ~ /\/Applications\/Codex.app\/Contents\/Resources\/codex app-server/) next
-        if (cmd ~ /\/Applications\/Codex.app\/Contents\/Frameworks\/Codex Framework.framework/) next
-        if (cmd ~ /\/Applications\/Codex.app\/Contents\/Frameworks\/Sparkle.framework/) next
+        if (index(cmd, app "/Contents/MacOS/Codex") == 1) next
+        if (index(cmd, app "/Contents/Resources/codex app-server") > 0) next
+        if (index(cmd, app "/Contents/Frameworks/Codex Framework.framework") > 0) next
+        if (index(cmd, app "/Contents/Frameworks/Sparkle.framework") > 0) next
         if (cmd ~ /org.sparkle-project.Sparkle\/Launcher/) next
-        if (cmd ~ /\/Applications\/Codex.app\/Contents\/Resources\/codex_chronicle/) next
-        if (cmd ~ /\/Applications\/Codex.app\/Contents\/Resources\/native\/bare-modifier-monitor/) next
+        if (index(cmd, app "/Contents/Resources/codex_chronicle") > 0) next
+        if (index(cmd, app "/Contents/Resources/native/bare-modifier-monitor") > 0) next
         if (cmd ~ /\/Users\/.*\/\.codex\/computer-use\/Codex Computer Use.app\/Contents\/MacOS\/SkyComputerUseService/) next
 
-        if (cmd ~ /\/Applications\/Codex.app\/Contents\/Resources\/codex /) {
+        if (index(cmd, app "/Contents/Resources/codex ") > 0) {
           print pid " cpu=" pcpu " etime=" etime " " cmd
           next
         }
@@ -192,15 +246,39 @@ clear_skipped_update() {
 
 open_update_dialog() {
   log "Opening Codex updater UI."
-  /usr/bin/osascript <<OSA >> "$LOG_FILE" 2>&1
-tell application id "$APP_ID" to activate
-delay 0.5
-tell application "System Events"
-  tell process "Codex"
-    click menu item "Check for Updates…" of menu "Codex" of menu bar 1
+  /usr/bin/osascript - "$APP_ID" <<'OSA' >> "$LOG_FILE" 2>&1
+on run argv
+  set appId to item 1 of argv
+  tell application id appId to activate
+  delay 0.5
+  tell application "System Events"
+    tell process "Codex"
+      click menu item "Check for Updates…" of menu "Codex" of menu bar 1
+    end tell
   end tell
-end tell
+end run
 OSA
+}
+
+zsh_quote() {
+  printf '%q' "$1"
+}
+
+codex_app_server_running() {
+  /bin/ps -axo command= \
+    | /usr/bin/awk -v needle="$APP_PATH/Contents/Resources/codex app-server" 'index($0, needle) { found=1 } END { exit found ? 0 : 1 }'
+}
+
+codex_gui_running() {
+  /usr/bin/pgrep -x Codex >/dev/null 2>&1
+}
+
+write_helper_assignment() {
+  local name="$1"
+  local value="$2"
+  printf '%s=' "$name" >> "$helper_script"
+  zsh_quote "$value" >> "$helper_script"
+  printf '\n' >> "$helper_script"
 }
 
 update_ui_dump() {
@@ -251,28 +329,30 @@ start_backup_reopen() {
   local helper_log="$LOG_DIR/$RUN_ID-reopen-helper.log"
   local helper_script="$LOG_DIR/$RUN_ID-reopen-helper.zsh"
   log "Starting finite backup reopen watchdog: $helper_log"
-  cat > "$helper_script" <<EOF
+  cat > "$helper_script" <<'EOF'
 #!/usr/bin/env zsh
 set -u
+EOF
 
-APP_PATH='$APP_PATH'
-HELPER_LOG='$helper_log'
-HELPER_TIMEOUT='$HELPER_TIMEOUT'
-HELPER_INTERVAL='$HELPER_INTERVAL'
+  write_helper_assignment APP_PATH "$APP_PATH"
+  write_helper_assignment HELPER_LOG "$helper_log"
+  write_helper_assignment HELPER_TIMEOUT "$HELPER_TIMEOUT"
+  write_helper_assignment HELPER_INTERVAL "$HELPER_INTERVAL"
 
+  cat >> "$helper_script" <<'EOF'
 helper_log() {
-  print -r -- "[\$(date '+%Y-%m-%d %H:%M:%S %Z')] \$*" >> "\$HELPER_LOG"
+  print -r -- "[$(date '+%Y-%m-%d %H:%M:%S %Z')] $*" >> "$HELPER_LOG"
 }
 
 app_version() {
-  /usr/libexec/PlistBuddy \\
-    -c 'Print :CFBundleShortVersionString' \\
-    -c 'Print :CFBundleVersion' \\
-    "\$APP_PATH/Contents/Info.plist" 2>&1
+  /usr/libexec/PlistBuddy \
+    -c 'Print :CFBundleShortVersionString' \
+    -c 'Print :CFBundleVersion' \
+    "$APP_PATH/Contents/Info.plist" 2>&1
 }
 
 cli_version() {
-  "\$APP_PATH/Contents/Resources/codex" --version 2>&1
+  "$APP_PATH/Contents/Resources/codex" --version 2>&1
 }
 
 has_gui() {
@@ -280,39 +360,40 @@ has_gui() {
 }
 
 has_app_server() {
-  /usr/bin/pgrep -f "\$APP_PATH/Contents/Resources/codex app-server" >/dev/null 2>&1
+  /bin/ps -axo command= \
+    | /usr/bin/awk -v needle="$APP_PATH/Contents/Resources/codex app-server" 'index($0, needle) { found=1 } END { exit found ? 0 : 1 }'
 }
 
-deadline=\$(( \$(date +%s) + HELPER_TIMEOUT ))
+deadline=$(( $(date +%s) + HELPER_TIMEOUT ))
 attempt=0
 
-helper_log "backup reopen watchdog started; timeout=\${HELPER_TIMEOUT}s interval=\${HELPER_INTERVAL}s"
+helper_log "backup reopen watchdog started; timeout=${HELPER_TIMEOUT}s interval=${HELPER_INTERVAL}s"
 
-while (( \$(date +%s) <= deadline )); do
+while (( $(date +%s) <= deadline )); do
   if has_gui && has_app_server; then
     helper_log "Codex GUI and app-server are running."
     helper_log "app version/build:"
-    app_version >> "\$HELPER_LOG"
+    app_version >> "$HELPER_LOG"
     helper_log "cli version:"
-    cli_version >> "\$HELPER_LOG"
+    cli_version >> "$HELPER_LOG"
     helper_log "backup reopen watchdog finished successfully."
     exit 0
   fi
 
-  if [[ -d "\$APP_PATH" ]]; then
-    attempt=\$(( attempt + 1 ))
-    helper_log "Codex not fully running; open attempt \$attempt."
-    /usr/bin/open -a "\$APP_PATH" >> "\$HELPER_LOG" 2>&1 || true
+  if [[ -d "$APP_PATH" ]]; then
+    attempt=$(( attempt + 1 ))
+    helper_log "Codex not fully running; open attempt $attempt."
+    /usr/bin/open -a "$APP_PATH" >> "$HELPER_LOG" 2>&1 || true
   else
-    helper_log "Codex app path missing while updater may be swapping bundle: \$APP_PATH"
+    helper_log "Codex app path missing while updater may be swapping bundle: $APP_PATH"
   fi
 
-  sleep "\$HELPER_INTERVAL"
+  sleep "$HELPER_INTERVAL"
 done
 
 helper_log "backup reopen watchdog timed out without seeing both GUI and app-server."
 helper_log "last app version/build attempt:"
-app_version >> "\$HELPER_LOG" || true
+app_version >> "$HELPER_LOG" || true
 exit 1
 EOF
   chmod +x "$helper_script"
@@ -323,10 +404,13 @@ EOF
 
 press_default_install() {
   log "Pressing the updater dialog default action."
-  /usr/bin/osascript <<OSA >> "$LOG_FILE" 2>&1
-tell application id "$APP_ID" to activate
-delay 0.2
-tell application "System Events" to key code 36
+  /usr/bin/osascript - "$APP_ID" <<'OSA' >> "$LOG_FILE" 2>&1
+on run argv
+  set appId to item 1 of argv
+  tell application id appId to activate
+  delay 0.2
+  tell application "System Events" to key code 36
+end run
 OSA
 }
 
@@ -365,8 +449,7 @@ wait_for_relaunch() {
   log "Waiting for Codex relaunch/app-server verification."
   while (( SECONDS < deadline )); do
     current_version="$(app_version | tr '\n' ' ' 2>/dev/null || true)"
-    if /usr/bin/pgrep -x Codex >/dev/null 2>&1 \
-      && /usr/bin/pgrep -f "$APP_PATH/Contents/Resources/codex app-server" >/dev/null 2>&1; then
+    if codex_gui_running && codex_app_server_running; then
       log "Codex is running. Version/build: $current_version"
       if [[ -n "$old_version" && "$current_version" == "$old_version" ]]; then
         log "Version unchanged from before; this can be normal if no update was pending."
@@ -383,6 +466,7 @@ main() {
   ln -sf "$LOG_FILE" "$LATEST_LOG"
   log "Log file: $LOG_FILE"
   require_macos
+  validate_config
 
   if [[ "$MODE" == "status" ]]; then
     status
@@ -396,13 +480,11 @@ main() {
   fi
 
   if [[ "$MODE" == "test-reopen-helper" ]]; then
-    [[ -d "$APP_PATH" ]] || die "Codex app not found at $APP_PATH"
     start_backup_reopen
     log "Started backup reopen watchdog only. Helper log: $LOG_DIR/$RUN_ID-reopen-helper.log"
     return
   fi
 
-  [[ -d "$APP_PATH" ]] || die "Codex app not found at $APP_PATH"
   local before
   before="$(app_version | tr '\n' ' ')"
   status
